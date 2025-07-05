@@ -21,11 +21,9 @@ TELEGRAM_BOT_TOKEN = get_env("TELEGRAM_BOT_TOKEN", required=True)
 GEMINI_API_KEY = get_env("GEMINI_API_KEY", required=True)
 
 # --- SMTP Configs ---
+# These are now used as fallback/defaults. User can override at runtime via /setup.
 SMTP_SERVER = get_env("SMTP_SERVER", required=True)
 SMTP_PORT = int(get_env("SMTP_PORT", 587))
-SMTP_USERNAME = get_env("SMTP_USERNAME", required=True)
-SMTP_PASSWORD = get_env("SMTP_PASSWORD", required=True)
-SENDER_EMAIL = get_env("SENDER_EMAIL", required=True)
 
 
 def check_config():
@@ -36,9 +34,6 @@ def check_config():
         ("GEMINI_API_KEY", GEMINI_API_KEY),
         ("SMTP_SERVER", SMTP_SERVER),
         ("SMTP_PORT", SMTP_PORT),
-        ("SMTP_USERNAME", SMTP_USERNAME),
-        ("SMTP_PASSWORD", SMTP_PASSWORD),
-        ("SENDER_EMAIL", SENDER_EMAIL),
     ]
     for key, value in required_vars:
         if value is None or str(value).strip() == "":
@@ -50,6 +45,3 @@ def check_config():
         )
         sys.exit(1)
 
-
-# Optionally run check_config() here if you want to fail fast on import
-# check_config()

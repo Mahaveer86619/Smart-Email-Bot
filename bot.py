@@ -1,19 +1,5 @@
-"""
-This script sets up a basic Telegram bot using python-telegram-bot library.
-It demonstrates:
-1. Initializing the bot with your token.
-2. Setting up logging.
-3. Handling the /start command to send a welcome message.
-4. Running the bot in polling mode for local development.
-
-Usage:
-1. Replace "YOUR_BOT_TOKEN" with your actual Telegram Bot Token.
-2. Run the script: python your_bot_file_name.py
-3. Open Telegram and send /start to your bot.
-"""
-
 import logging
-from telegram import Update
+from telegram import Update, ForceReply
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -46,27 +32,75 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     user = update.message.from_user
     logger.info("User %s requested help.", user.first_name)
 
-    # Reply to the user with detailed help information
     await update.message.reply_text(
-        f"Hello {user.first_name}! I'm Smart Mail Bot.\n\n"
-        "How to use me:\n"
-        "1. Use /compose to start writing a professional email.\n"
-        "2. I'll ask for the subject or a brief description.\n"
-        "3. I'll generate a draft. You can modify it by sending a new prompt, or use /send when ready.\n"
-        "4. When you use /send, I'll ask for recipient email(s).\n"
-        "5. Enter one or more emails (comma-separated). I'll send your email and confirm.\n"
-        "You can restart anytime with /compose."
+        f"Hello {user.first_name}, 👋\n\n"
+        "Welcome to Smart Mail Bot — your assistant for composing and sending professional emails directly from Telegram.\n\n"
+        "Here's how to use me:\n"
+        "1️⃣  Use /setup to securely provide your sender email and app password (required only once).\n"
+        "2️⃣  Use /compose to start a new email. I'll ask for the subject or a brief description.\n"
+        "3️⃣  I'll generate a draft for you. You can modify it by simply sending a new prompt, or proceed to send.\n"
+        "4️⃣  When you're ready, use /confirm. I'll ask for recipient email addresses (comma-separated for multiple recipients).\n"
+        "5️⃣  Once you provide the recipients, I'll send your email and confirm delivery.\n\n"
+        "You can restart the process anytime with /compose or get help with /help.\n\n"
+        "If you have any questions or encounter issues, please contact the administrator.\n\n"
+        "Thank you for using Smart Mail Bot! 🚀"
     )
+
+
+async def setup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Initiate setup to collect sender email and SMTP password from the user."""
+    user = update.message.from_user
+    logger.info("User %s started setup.", user.first_name)
+    context.user_data.clear()
+    context.user_data["awaiting_setup_email"] = True
+    await update.message.reply_text(
+        "Please enter your sender email address (the email you want to send from):",
+        reply_markup=ForceReply(selective=True),
+    )
+
+
+async def handle_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Handle setup steps for collecting sender email and SMTP password."""
+    user = update.message.from_user
+    message = update.message.text
+
+    if context.user_data.get("awaiting_setup_email"):
+        context.user_data["setup_sender_email"] = message.strip()
+        context.user_data["awaiting_setup_email"] = False
+        context.user_data["awaiting_setup_password"] = True
+        await update.message.reply_text(
+            "Now enter your app password (SMTP password) for this email:",
+            reply_markup=ForceReply(selective=True),
+        )
+        return True
+
+    if context.user_data.get("awaiting_setup_password"):
+        context.user_data["setup_smtp_password"] = message.strip()
+        context.user_data["awaiting_setup_password"] = False
+        await update.message.reply_text(
+            "✅ Setup complete! You can now use /compose to start writing your email."
+        )
+        logger.info("User %s completed setup.", user.first_name)
+        return True
+
+    return False
 
 
 async def compose_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Initiates the email composition process by asking for subject."""
     user = update.message.from_user
+    # Check if setup is done
+    if not context.user_data.get("setup_sender_email") or not context.user_data.get(
+        "setup_smtp_password"
+    ):
+        await update.message.reply_text(
+            "Please run /setup first to provide your sender email and app password."
+        )
+        return
     logger.info("User %s started composing an email.", user.first_name)
-    # Reset state
-    context.user_data.clear()
     context.user_data["awaiting_email_content"] = True
-
+    context.user_data["awaiting_email_modification"] = False
+    context.user_data["awaiting_recipients"] = False
     await update.message.reply_text(
         f"Great, {user.first_name}! Please provide the subject or a brief description of the email you'd like to send in any tone."
     )
@@ -75,7 +109,7 @@ async def compose_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def send_email_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Handles the /send command to start the recipient input process."""
+    """Handles the /confirm command to start the recipient input process."""
     user = update.message.from_user
     try:
         if not context.user_data.get("last_generated_email"):
@@ -93,16 +127,20 @@ async def send_email_command(
             "Please enter the recipient email address(es), separated by commas if sending to multiple people."
         )
     except Exception as e:
-        logger.error("Error in /send: %s", e)
+        logger.error("Error in /confirm: %s", e)
         await update.message.reply_text(
             "An error occurred. Please try again or use /compose to restart."
         )
 
 
 async def log_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles user messages: generates/modifies email, or logs recipient emails."""
+    """Handles user messages: setup, generates/modifies email, or logs recipient emails."""
     user = update.message.from_user
     message = update.message.text
+
+    # Handle setup workflow
+    if await handle_setup(update, context):
+        return
 
     try:
         # Awaiting subject/description for email
@@ -112,9 +150,7 @@ async def log_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 user.first_name,
                 message,
             )
-            await update.message.reply_text(
-                "Generating your email, please wait..."
-            )
+            await update.message.reply_text("Generating your email, please wait...")
             previous_email = context.user_data.get("last_generated_email")
             try:
                 email_data = generate_email(
@@ -131,12 +167,8 @@ async def log_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             context.user_data["last_generated_email"] = email_data.get("body", "")
             context.user_data["last_generated_subject"] = email_data.get("subject", "")
             email_preview = f"Subject: {email_data.get('subject', '(No Subject)')}\n\n{email_data.get('body', '(No Body)')}"
-            await update.message.reply_text(
-                f"Here is your generated email."
-            )
-            await update.message.reply_text(
-                email_preview
-            )
+            await update.message.reply_text(f"Here is your generated email.")
+            await update.message.reply_text(email_preview)
             await update.message.reply_text(
                 "If you'd like to modify it, just send a new prompt/description. When you're ready to send, use /confirm."
             )
@@ -173,7 +205,7 @@ async def log_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 email_preview = f"Subject: {email_data.get('subject', '(No Subject)')}\n\n{email_data.get('body', '(No Body)')}"
                 await update.message.reply_text(
                     f"Here is your revised email:\n\n{email_preview}\n\n"
-                    "Send another prompt to modify again, or use /send when you're ready to send."
+                    "Send another prompt to modify again, or use /confirm when you're ready."
                 )
                 return
 
@@ -191,35 +223,24 @@ async def log_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             logger.info("User %s provided recipients: %s", user.first_name, recipients)
             await update.message.reply_text("Sending email...")
             try:
-                # Check for valid SMTP configuration before sending
-                from configs import SMTP_SERVER, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD
-
-                if (
-                    not SMTP_SERVER
-                    or not SMTP_PORT
-                    or not SMTP_USERNAME
-                    or not SMTP_PASSWORD
-                ):
-                    await update.message.reply_text(
-                        "❌ Email sending is not configured properly. Please contact the administrator."
-                    )
-                    logger.error("SMTP configuration missing or invalid.")
-                else:
-                    send_email_smtp(
-                        recipients,
-                        context.user_data.get("last_generated_subject", "(No Subject)"),
-                        context.user_data.get("last_generated_email", "(No Body)"),
-                    )
-                    await update.message.reply_text(
-                        f"✅ Email sent to: {', '.join(recipients)}"
-                    )
-                    logger.info("Email sent to: %s", recipients)
+                # Use user-provided sender email and password
+                send_email_smtp(
+                    recipients,
+                    context.user_data.get("last_generated_subject", "(No Subject)"),
+                    context.user_data.get("last_generated_email", "(No Body)"),
+                    sender_email=context.user_data.get("setup_sender_email"),
+                    smtp_password=context.user_data.get("setup_smtp_password"),
+                )
+                await update.message.reply_text(
+                    f"✅ Email sent to: {', '.join(recipients)}"
+                )
+                logger.info("Email sent to: %s", recipients)
             except Exception as e:
                 logger.error("Error sending email: %s", e)
                 await update.message.reply_text(
-                    "❌ Failed to send email. Please check the recipient addresses, or verify the SMTP configuration, then try again."
+                    "❌ Failed to send email. Please check the recipient addresses, or verify your SMTP credentials, then try again."
                 )
-            context.user_data.clear()
+            context.user_data["awaiting_recipients"] = False
             return
 
         # If user sends a message out of workflow
@@ -242,6 +263,7 @@ def main() -> None:
     check_config()  # Ensure all configs are valid before starting
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("setup", setup_command))
     application.add_handler(CommandHandler("compose", compose_email))
     application.add_handler(CommandHandler("confirm", send_email_command))
     application.add_handler(
