@@ -1,0 +1,10 @@
+services:
+  smart-mail-bot:
+    build: .
+    container_name: smart-mail-bot
+    env_file:
+      - .env
+    restart: unless-stopped
+    # No ports exposed; bot connects outbound to Telegram
+    # volumes:
+    #   - ./logs:/app/logs  # Uncomment if you want to persist logs
